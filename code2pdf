@@ -1,152 +1,64 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Function to check and install packages for Debian-based systems
-install_debian_packages() {
-    local packages="$1"
-    for package in $packages; do
-        if ! dpkg -l | grep -q "$package"; then
-            echo "Installing $package..."
-            sudo apt-get update
-            sudo apt-get install -y "$package"
-        fi
-    done
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="$SCRIPT_DIR/lib"
+
+# shellcheck source=/dev/null
+source "$LIB_DIR/utils.sh"
+source "$LIB_DIR/os_detect.sh"
+source "$LIB_DIR/packages.sh"
+source "$LIB_DIR/languages.sh"
+source "$LIB_DIR/latex_gen.sh"
+source "$LIB_DIR/build.sh"
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") <folder_path> <file_extension>
+
+Example:
+  $(basename "$0") /path/to/project cs
+EOF
 }
 
-# Function to check and install packages for Red Hat-based systems
-install_redhat_packages() {
-    local packages="$1"
-    for package in $packages; do
-        if ! rpm -q "$package" > /dev/null 2>&1; then
-            echo "Installing $package..."
-            sudo dnf install -y "$package"
-        fi
-    done
+main() {
+  if [[ $# -ne 2 ]]; then
+    usage
+    exit 1
+  fi
+
+  local folder_path="$1"
+  local file_ext="$2"
+
+  require_command find
+  require_command sed
+
+  if [[ ! -d "$folder_path" ]]; then
+    die "Folder does not exist: $folder_path"
+  fi
+
+  local distro
+  distro="$(detect_distro)"
+  echo "Detected distro: $distro"
+
+  # Install deps (minted needs pygments + -shell-escape build)
+  install_required_packages "$distro"
+
+  local language
+  language="$(language_for_ext "$file_ext")"
+  if [[ -z "$language" ]]; then
+    die "Language for file extension '.$file_ext' is not defined."
+  fi
+
+  local output_tex="generated.tex"
+  local output_pdf="output.pdf"
+
+  generate_latex_file "$output_tex" "$folder_path" "$file_ext" "$language"
+  build_pdf "$output_tex" "$output_pdf"
+  cleanup_build_artifacts "$output_tex"
+
+  echo "PDF generated as $output_pdf"
 }
 
-# Function to check and install packages for Arch Linux
-install_arch_packages() {
-    local packages="$1"
-    for package in $packages; do
-        if ! pacman -Q "$package" > /dev/null 2>&1; then
-            echo "Installing $package..."
-            sudo pacman -Sy --noconfirm "$package"
-        fi
-    done
-}
+main "$@"
 
-# Determine the Linux distribution
-if [ -f /etc/os-release ]; then
-    . /etc/os-release
-    DISTRO_NAME=$NAME
-elif [ -f /etc/lsb-release ]; then
-    . /etc/lsb-release
-    DISTRO_NAME=$DISTRIB_ID
-else
-    echo "Cannot determine Linux distribution."
-    exit 1
-fi
-
-# Install required packages based on the distribution
-case $DISTRO_NAME in
-    *Ubuntu*|*Debian*)
-        install_debian_packages "texlive pdflatex python3-pygments"
-        ;;
-    *Fedora*|*RedHat*|*CentOS*)
-        install_redhat_packages "texlive pdflatex python3-pygments"
-        ;;
-    *Arch*|*Arch\ Linux*)
-        install_arch_packages "texlive-core texlive-bin texlive-latexextra python-pygments"
-        ;;
-    *)
-        echo "Unsupported distribution: $DISTRO_NAME"
-        exit 1
-        ;;
-esac
-
-# Check for required arguments
-if [ "$#" -ne 2 ]; then
-    echo "Usage: $0 <folder_path> <file_extension>"
-    exit 1
-fi
-
-FOLDER_PATH="$1"
-FILE_EXTENSION="$2"
-OUTPUT_FILE="generated.tex"
-
-# Escape underscores in folder path
-FOLDER_PATH_ESCAPED=$(echo "$FOLDER_PATH" | sed 's/_/\\_/g')
-
-# Dictionary of file extensions and their corresponding language names
-declare -A LANGUAGES
-LANGUAGES=(
-    ["py"]="python"
-    ["java"]="java"
-    ["c"]="c"
-    ["cpp"]="cpp"
-    ["js"]="javascript"
-    ["html"]="html"
-    ["css"]="css"
-    ["rb"]="ruby"
-    ["sh"]="shell"
-    ["cs"]="csharp"
-    # Add more file extensions and languages as needed
-)
-
-# Determine the language for the given file extension
-LANGUAGE="${LANGUAGES[$FILE_EXTENSION]}"
-if [ -z "$LANGUAGE" ]; then
-    echo "Language for file extension '.$FILE_EXTENSION' is not defined."
-    exit 1
-fi
-
-# Create a temporary LaTeX file
-echo '\documentclass{article}' > "$OUTPUT_FILE"
-echo '\title{OOP Lab 1}' >> "$OUTPUT_FILE"
-echo '\date{\today}' >> "$OUTPUT_FILE"
-echo '\author{Dhanveer Ramnauth}' >> "$OUTPUT_FILE"
-echo '\usepackage[ddmmyyyy]{datetime}' >> "$OUTPUT_FILE"
-echo '\usepackage{minted}' >> "$OUTPUT_FILE"
-echo '\usepackage{caption}' >> "$OUTPUT_FILE"
-echo '\usepackage{float}' >> "$OUTPUT_FILE"
-echo '\usepackage[top=1.5cm, bottom=2cm, left=1.5cm, right=2cm]{geometry}' >> "$OUTPUT_FILE"
-echo '\usepackage{titling}' >> "$OUTPUT_FILE"
-echo '\usepackage{hyperref}' >> "$OUTPUT_FILE"
-echo '\usepackage{tocloft}' >> "$OUTPUT_FILE"
-echo '\usepackage{titlesec}' >> "$OUTPUT_FILE"
-echo '\titlespacing*{\section} {0pt} {0pt} {1.5em}' >> "$OUTPUT_FILE"
-echo '\renewcommand\maketitlehooka{\null\mbox{}\vfill}' >> "$OUTPUT_FILE"
-echo '\renewcommand\maketitlehookd{\vfill\null}' >> "$OUTPUT_FILE"
-echo '\newcommand{\includeminted}[3]{\section{#1}\inputminted[linenos, breaklines]{#2}{#3}}' >> "$OUTPUT_FILE"
-echo '\begin{document}' >> "$OUTPUT_FILE"
-echo '\begin{titlingpage}' >> "$OUTPUT_FILE"
-echo '\maketitle' >> "$OUTPUT_FILE"
-echo '\end{titlingpage}' >> "$OUTPUT_FILE"
-echo '\tableofcontents' >> "$OUTPUT_FILE"
-echo '\newpage' >> "$OUTPUT_FILE"  # or \clearpage
-
-# Find files and append to the LaTeX file
-find "$FOLDER_PATH" -type f -name "*.$FILE_EXTENSION" | while read -r file; do
-    filename=$(basename "$file")
-    # Escape underscores in filenames
-    filename_escaped=$(echo "$filename" | sed 's/_/\\_/g')
-    echo "\\includeminted{$filename_escaped}{$LANGUAGE}{$file}" >> "$OUTPUT_FILE"
-done
-
-# Finish the LaTeX document
-echo '\end{document}' >> "$OUTPUT_FILE"
-
-# Compile the LaTeX file to PDF with multiple passes
-for i in {1..2}; do
-    pdflatex -shell-escape "$OUTPUT_FILE"
-done
-
-# Cleanup auxiliary files
-rm -rf generated.aux generated.out generated.toc generated.log _minted-generated generated.tex
-
-# Rename the PDF file to be the same as the LaTeX file (without extension)
-PDF_FILE="${OUTPUT_FILE%.tex}.pdf"
-if [ -f "$PDF_FILE" ]; then
-    mv "$PDF_FILE" "output.pdf"
-fi
-
-echo "PDF generated as output.pdf"
