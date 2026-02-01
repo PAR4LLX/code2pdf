@@ -33,21 +33,23 @@ install_arch_packages() {
 }
 
 install_required_packages() {
-  local distro_name="$1"
+  local distro_family="$1"
 
-  case "$distro_name" in
-    *Ubuntu*|*Debian*)
+  case "$distro_family" in
+    debian)
       install_debian_packages "texlive pdflatex python3-pygments"
       ;;
-    *Fedora*|*RedHat*|*CentOS*)
+    redhat)
       install_redhat_packages "texlive pdflatex python3-pygments"
       ;;
-    *Arch*|*Arch\ Linux*)
+    arch)
+      # Works for Arch + EndeavourOS + other Arch-likes
       install_arch_packages "texlive-core texlive-bin texlive-latexextra python-pygments"
       ;;
     *)
-      echo "Unsupported distribution: $distro_name"
-      echo "Skipping package install. Ensure TeX + pygments are installed."
+      echo "Unsupported/unknown distro family: $distro_family"
+      echo "Skipping package install. Ensure TeX + Pygments are installed."
       ;;
   esac
 }
+
